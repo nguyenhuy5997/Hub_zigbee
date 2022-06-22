@@ -13,11 +13,102 @@
  */
 
 #include "WebServer.h"
-#include "../main/jsonUser/json_user.h"
-#include "../main/SPIFFS/spiffs_user.h"
-static const char *TAG = "HTTP_SERVER";
+#include "../CompatibleMode/AP.h"
+#include "../../jsonUser/json_user.h"
+#include "../../SPIFFS/spiffs_user.h"
+#include "../../common.h"
+#include "../../WiFi/WiFi_proc.h"
 
+static const char *TAG = "HTTP_SERVER";
+extern Device Device_Infor;
+extern bool Flag_client_connected;
+httpd_handle_t server = NULL;
+bool Flag_AP_resp = false;
+bool Flag_wifi = false;
+char resp_str[513] = {0};
 /* An HTTP GET handler */
+extern __NOINIT_ATTR bool Flag_quick_pair;
+extern __NOINIT_ATTR bool Flag_compatible_pair;
+static esp_err_t GET_rst_handler(httpd_req_t *req)
+{
+    char*  buf;
+    size_t buf_len;
+    char host[16];
+    /* Get header value string length and allocate memory for length + 1,
+     * extra byte for null termination */
+    buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
+    if (buf_len > 1) {
+        buf = malloc(buf_len);
+        /* Copy null terminated value string into buffer */
+        if (httpd_req_get_hdr_value_str(req, "Host", buf, buf_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Found header => Host: %s", buf);
+            memcpy(host, buf, sizeof(host));
+        }
+        free(buf);
+    }
+
+    buf_len = httpd_req_get_hdr_value_len(req, "Content-Type") + 1;
+    if (buf_len > 1) {
+        buf = malloc(buf_len);
+        if (httpd_req_get_hdr_value_str(req, "Content-Type", buf, buf_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Found header => Content-Type: %s", buf);
+        }
+        free(buf);
+    }
+
+    buf_len = httpd_req_get_hdr_value_len(req, "User-Agent") + 1;
+    if (buf_len > 1) {
+        buf = malloc(buf_len);
+        if (httpd_req_get_hdr_value_str(req, "User-Agent", buf, buf_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Found header => User-Agent: %s", buf);
+        }
+        free(buf);
+    }
+
+    /* Read URL query string length and allocate memory for length + 1,
+     * extra byte for null termination */
+    buf_len = httpd_req_get_url_query_len(req) + 1;
+    if (buf_len > 1) {
+        buf = malloc(buf_len);
+        if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+            ESP_LOGI(TAG, "Found URL query => %s", buf);
+            char param[32];
+            /* Get value of expected key from query string */
+            if (httpd_query_key_value(buf, "query1", param, sizeof(param)) == ESP_OK) {
+                ESP_LOGI(TAG, "Found URL query parameter => query1=%s", param);
+            }
+            if (httpd_query_key_value(buf, "query3", param, sizeof(param)) == ESP_OK) {
+                ESP_LOGI(TAG, "Found URL query parameter => query3=%s", param);
+            }
+            if (httpd_query_key_value(buf, "query2", param, sizeof(param)) == ESP_OK) {
+                ESP_LOGI(TAG, "Found URL query parameter => query2=%s", param);
+            }
+        }
+        free(buf);
+    }
+
+    /* Set some custom headers */
+    httpd_resp_set_hdr(req, "Custom-Header-1", "Custom-Value-1");
+    httpd_resp_set_hdr(req, "Custom-Header-2", "Custom-Value-2");
+
+    /* Send response with custom headers and body set as the
+     * string passed in user context*/
+    char resp_str[513] = "{\"error\":\"0\"}";
+    if(httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN))
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
+    /* After sending the HTTP response the old HTTP request
+     * headers are lost. Check if HTTP request headers can be read now. */
+    if (httpd_req_get_hdr_value_len(req, "Host") == 0) {
+        ESP_LOGI(TAG, "Request headers lost");
+    }
+    return ESP_OK;
+}
+static const httpd_uri_t AP_rest = {
+    .uri       = "/restart",
+    .method    = HTTP_GET,
+    .handler   = GET_rst_handler,
+    .user_ctx  = "Hello World!"
+};
 static esp_err_t GET_handler(httpd_req_t *req)
 {
     char*  buf;
@@ -82,7 +173,7 @@ static esp_err_t GET_handler(httpd_req_t *req)
 
     /* Send response with custom headers and body set as the
      * string passed in user context*/
-    char resp_str[513];
+    char resp_str[513] = {0};
     sprintf(resp_str, "{\"ipdevice\":\"%s\",\"type\":\"2\",\"devicename\":\"Vhome-ZigbeeBridge\"}", host);
     printf("\r\n /device resp: %s\r\n", resp_str);
     httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
@@ -99,17 +190,28 @@ static const httpd_uri_t GET_device = {
     .uri       = "/device",
     .method    = HTTP_GET,
     .handler   = GET_handler,
-    /* Let's pass response string in user
-     * context to demonstrate it's usage */
     .user_ctx  = "Hello World!"
 };
 
-/* An HTTP POST handler */
+
 static esp_err_t POST_handler(httpd_req_t *req)
 {
+	bool Flag_encode = false;
     char buf[100];
+    char buff_decode[100];
+    char *buf_header;
     int ret, remaining = req->content_len;
-
+    printf("remaining: %d\r\n", remaining);
+    size_t buf_len;
+    buf_len = httpd_req_get_hdr_value_len(req, "Content-Type") + 1;
+	if (buf_len > 1) {
+		buf_header = malloc(buf_len);
+		if (httpd_req_get_hdr_value_str(req, "Content-Type", buf_header, buf_len) == ESP_OK) {
+			ESP_LOGI(TAG, "Found header => Content-Type: %s", buf_header);
+			if(strstr(buf_header, "urlencoded")) Flag_encode = true;
+		}
+		free(buf_header);
+	}
     while (remaining > 0) {
         /* Read the data for the request */
         if ((ret = httpd_req_recv(req, buf,
@@ -122,17 +224,38 @@ static esp_err_t POST_handler(httpd_req_t *req)
         }
 
         /* Send back the same data */
-        httpd_resp_send_chunk(req, buf, ret);
+//        httpd_resp_send_chunk(req, buf, ret);
         remaining -= ret;
 
         /* Log data received */
-        ESP_LOGI(TAG, "=========== RECEIVED DATA ==========");
-        ESP_LOGI(TAG, "%.*s", ret, buf);
-        ESP_LOGI(TAG, "====================================");
     }
-    JSON_analyze_sub(buf, )
+	if (Flag_encode)
+	{
+		urldecode2(buff_decode, buf);
+		ESP_LOGI(TAG, "=========== RECEIVED DATA ==========");
+		ESP_LOGI(TAG, "%s", buff_decode);
+		ESP_LOGI(TAG, "====================================");
+		writetofile("deviceinfor", buff_decode);
+		get_device_infor(&Device_Infor);
+		ESP_LOGI(TAG, "ID: %s, TOK: %s", Device_Infor.id, Device_Infor.token);
+	}
+	else
+	{
+		ESP_LOGI(TAG, "=========== RECEIVED DATA ==========");
+		ESP_LOGI(TAG, "%s", buf);
+		ESP_LOGI(TAG, "====================================");
+		writetofile("deviceinfor", buf);
+		get_device_infor(&Device_Infor);
+		ESP_LOGI(TAG, "ID: %s, TOK: %s", Device_Infor.id, Device_Infor.token);
+	}
     // End response
-    httpd_resp_send_chunk(req, NULL, 0);
+//    httpd_resp_send_chunk(req, NULL, 0);
+    char resp_str[20] = "{\"error\":\"0\"}";
+	httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+	printf("Send respond to STA\r\n");
+    Flag_quick_pair = Flag_compatible_pair = false;
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    esp_restart();
     return ESP_OK;
 }
 
@@ -143,6 +266,101 @@ static const httpd_uri_t POST_ap = {
     .user_ctx  = NULL
 };
 
+static esp_err_t AP_POST_handler(httpd_req_t *req)
+{
+	bool Flag_encode = false;
+	char buf[100];
+	char buff_decode[100];
+	char * buf_header;
+	int ret, remaining = req->content_len;
+	printf("remaining: %d\r\n", remaining);
+	wifi_config_t wifi_config = {
+			.sta = {
+			 .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+				.pmf_cfg = {
+					.capable = true,
+					.required = false
+				},
+			},
+	};
+	size_t buf_len;
+	buf_len = httpd_req_get_hdr_value_len(req, "Content-Type") + 1;
+	if (buf_len > 1) {
+		buf_header = malloc(buf_len);
+		if (httpd_req_get_hdr_value_str(req, "Content-Type", buf_header, buf_len) == ESP_OK) {
+			ESP_LOGI(TAG, "Found header => Content-Type: %s", buf_header);
+			if(strstr(buf_header, "urlencoded")) Flag_encode = true;
+		}
+		free(buf_header);
+	}
+	if(remaining > 0)
+	{
+		while (remaining > 0) {
+			/* Read the data for the request */
+			if ((ret = httpd_req_recv(req, buf,
+							MIN(remaining, sizeof(buf)))) <= 0) {
+				if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+					/* Retry receiving if timeout occurred */
+					continue;
+				}
+				return ESP_FAIL;
+			}
+			remaining -= ret;
+		}
+		buf[req->content_len] = '\0';
+	}
+	else
+	{
+		printf("strlen(req->uri): %d\r\n", strlen(req->uri));
+		memcpy(buf, req->uri, strlen(req->uri));
+		buf[strlen(req->uri)] = '\0';
+	}
+	if (Flag_encode)
+	{
+		urldecode2(buff_decode, buf);
+		ESP_LOGI(TAG, "=========== RECEIVED DATA ==========");
+		ESP_LOGI(TAG, "%s", buff_decode);
+		ESP_LOGI(TAG, "====================================");
+		parse_wifi_uri(buff_decode,(char*) wifi_config.sta.ssid,(char*) wifi_config.sta.password);
+	}
+	else
+	{
+		ESP_LOGI(TAG, "=========== RECEIVED DATA ==========");
+		ESP_LOGI(TAG, "%s", buf);
+		ESP_LOGI(TAG, "====================================");
+		parse_wifi_uri(buf,(char*) wifi_config.sta.ssid,(char*) wifi_config.sta.password);
+	}
+
+	esp_wifi_disconnect();
+	bool res;
+	res = wifi_init_sta(wifi_config);
+	if (res)
+	{
+		Flag_wifi = true;
+		tcpip_adapter_ip_info_t ipInfo;
+		char str[256];
+		tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ipInfo);
+		sprintf(str, "" IPSTR "", IP2STR(&ipInfo.ip));
+		sprintf(resp_str, "{\"ipdevice\":\"%s\",\"type\":\"2\",\"devicename\":\"Vhome-ZigbeeBridge\"}", str);
+		printf("\r\n /device resp: %s\r\n", resp_str);
+		printf("Send respond to STA\r\n");
+		httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+//		ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
+	}
+	else
+	{
+		char resp_str[513] = "{\"error\":\"1\"}";
+		httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+	}
+	return ESP_OK;
+}
+
+static const httpd_uri_t AP_POST_ap = {
+    .uri       = "/wi",
+    .method    = HTTP_POST,
+    .handler   = AP_POST_handler,
+    .user_ctx  = NULL
+};
 esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 {
     if (strcmp("/device", req->uri) == 0) {
@@ -162,7 +380,6 @@ esp_err_t http_404_error_handler(httpd_req_t *req, httpd_err_code_t err)
 httpd_handle_t start_webserver(void)
 {
 	esp_err_t err;
-    httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
 
@@ -175,6 +392,8 @@ httpd_handle_t start_webserver(void)
         ESP_LOGI(TAG, "Registering URI handlers");
         httpd_register_uri_handler(server, &GET_device);
         httpd_register_uri_handler(server, &POST_ap);
+        httpd_register_uri_handler(server, &AP_POST_ap);
+        httpd_register_uri_handler(server, &AP_rest);
         return server;
     }
     printf("\r\nerr: %d\r\n", err);
@@ -209,3 +428,59 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
+void urldecode2(char *dst, const char *src)
+{
+        char a, b;
+        while (*src) {
+                if ((*src == '%') &&
+                    ((a = src[1]) && (b = src[2])) &&
+                    (isxdigit(a) && isxdigit(b))) {
+                        if (a >= 'a')
+                                a -= 'a'-'A';
+                        if (a >= 'A')
+                                a -= ('A' - 10);
+                        else
+                                a -= '0';
+                        if (b >= 'a')
+                                b -= 'a'-'A';
+                        if (b >= 'A')
+                                b -= ('A' - 10);
+                        else
+                                b -= '0';
+                        *dst++ = 16*a+b;
+                        src+=3;
+                } else if (*src == '+') {
+                        *dst++ = ' ';
+                        src++;
+                } else {
+                        *dst++ = *src++;
+                }
+        }
+        *dst++ = '\0';
+}
+
+void parse_wifi_uri(char * buf, char * s, char * p)
+{
+	char * sub_p = strstr(buf, "p1=");
+	char * sub_s = strstr(buf, "s1=");
+	char * sub_save = strstr(buf, "save=");
+	char * index;
+	if((sub_p != NULL) && (sub_s != NULL) && (sub_save != NULL))
+	{
+	    index = strstr(sub_p,"&");
+	    if (index != NULL) {
+	        int len = strlen(sub_p) - strlen(index) - 3;
+	        strncpy(p, sub_p+3,len);
+	        p[len] = 0;
+	        printf("pass = %s\n", p);
+	    }
+	    index = strstr(sub_s,"&");
+	    if (index != NULL) {
+	        int len = strlen(sub_s) - strlen(index) - 3;
+	        strncpy(s, sub_s+3, len);
+	        s[len] = 0;
+	        printf("ssid = %s\n", s);
+	    }
+
+	}
+}

@@ -10,12 +10,13 @@
    Return an error if anything goes wrong
    during this process.
  */
-
-esp_err_t writetofile(char* FilePath, char* FileName,char* textbuffer)
+#define SPIFFSTAG  "spiffs"
+esp_err_t writetofile( char* FileName,char* textbuffer)
 {
 	ESP_LOGI(SPIFFSTAG, "Opening file");
+	char *base_path = "/spiffs";
 	char file[64];
-	sprintf(file, "%s/%s", FilePath, FileName);
+	sprintf(file, "%s/%s", base_path, FileName);
 	FILE* f = NULL;
 	f = fopen(file, "w");
 	if (f == NULL) {
@@ -32,10 +33,11 @@ esp_err_t writetofile(char* FilePath, char* FileName,char* textbuffer)
 	return ESP_OK;
 }
 
-esp_err_t readfromfile(char* FilePath, char* FileName,char* textbuffer)
+esp_err_t readfromfile(char* FileName,char* textbuffer)
 {
+	char *base_path = "/spiffs";
 	char file[64];
-	sprintf(file, "%s/%s", FilePath, FileName);
+	sprintf(file, "%s/%s", base_path, FileName);
     FILE* f = NULL;
     ESP_LOGI(SPIFFSTAG, "Reading file");
     f = fopen(file, "r");

@@ -635,7 +635,7 @@
     "OPENSSL_DEBUG": false,
     "OPENSSL_ERROR_STACK": true,
     "OPENTHREAD_ENABLED": false,
-    "OTA_ALLOW_HTTP": false,
+    "OTA_ALLOW_HTTP": true,
     "PARTITION_TABLE_CUSTOM": true,
     "PARTITION_TABLE_CUSTOM_FILENAME": "partitions.csv",
     "PARTITION_TABLE_FILENAME": "partitions.csv",

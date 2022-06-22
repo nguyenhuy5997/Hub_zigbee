@@ -12,8 +12,8 @@
 #include "string.h"
 #include "stdlib.h"
 
-void JSON_analyze_post(char* my_json_string, long* Timestamp);
-
+void JSON_analyze_post(char* my_json_string, char * deviceid, char * devicetoken);
+void JSON_analyze_SUB(char* my_json_string, char * action);
 
 
 

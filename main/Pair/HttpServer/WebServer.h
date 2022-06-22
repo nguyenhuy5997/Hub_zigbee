@@ -21,6 +21,6 @@
 #include <esp_http_server.h>
 
 httpd_handle_t start_webserver(void);
-
-
+void parse_wifi_uri(char * buf, char * s, char * p);
+void urldecode2(char *dst, const char *src);
 #endif /* MAIN_PAIR_HTTPSERVER_WEBSERVER_H_ */

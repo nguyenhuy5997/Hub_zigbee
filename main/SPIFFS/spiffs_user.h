@@ -22,12 +22,11 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
-static const char *SPIFFSTAG = "spiffs";
 #define STORAGE_NAMESPACE "storage"
 #define MAX_CHAR 500
 
-esp_err_t writetofile(char* FilePath, char* FileName,char* textbuffer);
-esp_err_t readfromfile(char* FilePath, char* FileName,char* textbuffer);
+esp_err_t writetofile(char* FileName,char* textbuffer);
+esp_err_t readfromfile(char* FileName,char* textbuffer);
 void mountSPIFFS();
 
 
